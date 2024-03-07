@@ -1,0 +1,49 @@
+WITH TempDifferences AS (
+  SELECT
+    stationid,
+    recordeddate,
+    tmax,
+    tmin,
+    LAG(tmax, 1) OVER (PARTITION BY stationid ORDER BY recordeddate) AS prev_day_tmax,
+    LAG(tmin, 1) OVER (PARTITION BY stationid ORDER BY recordeddate) AS prev_day_tmin
+  FROM
+    climate_data
+),
+HeatwavePeriods AS (
+  SELECT
+    stationid,
+    recordeddate,
+    tmax,
+    tmin,
+    SUM(is_heatwave_start) OVER (PARTITION BY stationid ORDER BY recordeddate) AS heatwave_id
+  FROM (
+    SELECT
+      stationid,
+      recordeddate,
+      tmax,
+      tmin,
+      CASE 
+        WHEN tmax > 180 AND prev_day_tmax > 180 THEN 1 
+        ELSE 0 
+      END AS is_heatwave_start
+    FROM
+      TempDifferences
+  ) AS heatwave_starts
+)
+INSERT OVERWRITE LOCAL DIRECTORY '/user/hive/temperatureoutput'
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+SELECT
+  stationid,
+  heatwave_id,
+  MIN(recordeddate) AS heatwave_start,
+  MAX(recordeddate) AS heatwave_end,
+  COUNT(*) AS duration,
+  MAX(tmax) AS max_temperature,
+  MIN(tmin) AS min_temperature
+FROM
+  HeatwavePeriods
+WHERE
+  tmax > 180
+GROUP BY
+  stationid, heatwave_id;
