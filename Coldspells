@@ -1,0 +1,47 @@
+WITH TempDifferences AS (
+  SELECT
+    stationid,
+    recordeddate,
+    tmax,
+    tmin,
+    LAG(tmax, 1) OVER (PARTITION BY stationid ORDER BY recordeddate) AS prev_day_tmax,
+    LAG(tmin, 1) OVER (PARTITION BY stationid ORDER BY recordeddate) AS prev_day_tmin
+  FROM
+    climate_data
+),
+ColdSpellPeriods AS (
+  SELECT
+    stationid,
+    recordeddate,
+    tmax,
+    tmin,
+    SUM(is_coldspell_start) OVER (PARTITION BY stationid ORDER BY recordeddate) AS coldspell_id
+  FROM (
+    SELECT
+      stationid,
+      recordeddate,
+      tmax,
+      tmin,
+      CASE 
+        WHEN tmin < 0 AND prev_day_tmin < 0 THEN 1 
+        ELSE 0 
+      END AS is_coldspell_start
+    FROM
+      TempDifferences
+  ) AS coldspell_starts
+)
+INSERT OVERWRITE LOCAL DIRECTORY '/user/hive/temperatureoutput'
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+SELECT
+  stationid,
+  coldspell_id,
+  MIN(recordeddate) AS coldspell_start,
+  MAX(recordeddate) AS coldspell_end,
+  COUNT(*) AS duration,
+  MAX(tmax) AS max_temperature,
+  MIN(tmin) AS min_temperature
+FROM
+  ColdSpellPeriods
+GROUP BY
+  stationid, coldspell_id;
